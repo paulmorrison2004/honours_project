@@ -9,9 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-# ============================================================================
 # merge trait datasets by species name
-# ============================================================================
 
 library(dplyr)
 library(stringr)
@@ -81,15 +79,10 @@ cat("records with life-history data:", sum(!is.na(gbif_integrated$body_mass_g)),
 ```
 
 ```{r}
-# ============================================================================
-# create filtered datasets by trait completeness
-# ============================================================================
 
 library(dplyr)
 
-# ============================================================================
 # dataset 1: gbif + thermal data only
-# ============================================================================
 
 # records with thermal data (tmax or tmin)
 gbif_thermal_only <- gbif_integrated %>%
@@ -101,9 +94,7 @@ cat("species:", n_distinct(gbif_thermal_only$name_clean), "\n")
 cat("with tmax:", sum(!is.na(gbif_thermal_only$tmax)), "\n")
 cat("with tmin:", sum(!is.na(gbif_thermal_only$tmin)), "\n\n")
 
-# ============================================================================
 # dataset 2: gbif + thermal + any life-history
-# ============================================================================
 
 # thermal data + at least one life-history trait
 gbif_thermal_plus_life <- gbif_integrated %>%
@@ -118,9 +109,7 @@ cat("with body mass:", sum(!is.na(gbif_thermal_plus_life$body_mass_g)), "\n")
 cat("with longevity:", sum(!is.na(gbif_thermal_plus_life$max_longevity_yrs)), "\n")
 cat("with metabolic rate:", sum(!is.na(gbif_thermal_plus_life$metabolic_rate_w)), "\n\n")
 
-# ============================================================================
 # dataset 3: gbif + thermal + complete life-history
-# ============================================================================
 
 # thermal + body mass + longevity (core life-history traits)
 gbif_complete <- gbif_integrated %>%
@@ -134,16 +123,12 @@ cat("all have thermal:", sum(!is.na(gbif_complete$tmax) | !is.na(gbif_complete$t
 cat("all have body mass:", sum(!is.na(gbif_complete$body_mass_g)), "\n")
 cat("all have longevity:", sum(!is.na(gbif_complete$max_longevity_yrs)), "\n\n")
 
-# ============================================================================
 # data integrity checks
-# ============================================================================
 
-cat("=== data integrity checks ===\n\n")
 
 # check taxonomic distribution in each dataset
 cat("taxonomic coverage in each dataset:\n\n")
 
-cat("dataset 1 (thermal only) by class:\n")
 gbif_thermal_only %>%
   count(class, sort = TRUE) %>%
   head(10) %>%
