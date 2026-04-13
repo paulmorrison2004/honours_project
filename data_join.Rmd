@@ -1,0 +1,363 @@
+---
+title: "data joining"
+output: html_document
+date: "2025-10-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# ============================================================================
+# merge trait datasets by species name
+# ============================================================================
+
+library(dplyr)
+library(stringr)
+
+# standardize species names - extract genus + species from gbif
+gbif_clean <- gbif_raw %>%
+  mutate(
+    name_clean = str_extract(scientificName, "^[A-Z][a-z]+ [a-z]+"),
+    name_clean = str_trim(name_clean)
+  ) %>%
+  filter(!is.na(name_clean))
+
+# create name_clean in globtherm
+globtherm_clean <- globtherm_raw %>%
+  mutate(name_clean = paste(Genus, Species))
+
+# create name_clean in anage
+anage_clean <- anage_raw %>%
+  mutate(name_clean = paste(Genus, Species))
+
+# data check
+cat("gbif species:", n_distinct(gbif_clean$name_clean), "\n")
+cat("globtherm species:", n_distinct(globtherm_clean$name_clean), "\n")
+cat("anage species:", n_distinct(anage_clean$name_clean), "\n\n")
+
+# select thermal columns from globtherm
+globtherm_select <- globtherm_clean %>%
+  select(name_clean, tmax = Tmax, tmin, phylum_gt = Phylum, 
+         class_gt = Class, order_gt = Order)
+
+# join thermal data
+gbif_thermal <- gbif_clean %>%
+  left_join(globtherm_select, by = "name_clean")
+
+cat("thermal join complete\n")
+cat("records with tmax:", sum(!is.na(gbif_thermal$tmax)), "\n")
+cat("species matched:", n_distinct(gbif_thermal$name_clean[!is.na(gbif_thermal$tmax)]), "\n")
+cat("match rate:", round(100 * n_distinct(gbif_thermal$name_clean[!is.na(gbif_thermal$tmax)]) / 
+                           n_distinct(gbif_thermal$name_clean), 1), "%\n\n")
+
+# select life-history columns from anage
+anage_select <- anage_clean %>%
+  select(name_clean, 
+         female_maturity_days = `Female maturity (days)`,
+         male_maturity_days = `Male maturity (days)`,
+         adult_weight_g = `Adult weight (g)`,
+         max_longevity_yrs = `Maximum longevity (yrs)`,
+         metabolic_rate_w = `Metabolic rate (W)`,
+         body_mass_g = `Body mass (g)`)
+
+# join life-history data
+gbif_integrated <- gbif_thermal %>%
+  left_join(anage_select, by = "name_clean")
+
+cat("life-history join complete\n")
+cat("records with body mass:", sum(!is.na(gbif_integrated$body_mass_g)), "\n")
+cat("species matched:", n_distinct(gbif_integrated$name_clean[!is.na(gbif_integrated$body_mass_g)]), "\n")
+cat("match rate:", round(100 * n_distinct(gbif_integrated$name_clean[!is.na(gbif_integrated$body_mass_g)]) / 
+                           n_distinct(gbif_integrated$name_clean), 1), "%\n\n")
+
+# final summary
+cat("=== final integrated dataset ===\n")
+cat("total records:", nrow(gbif_integrated), "\n")
+cat("unique species:", n_distinct(gbif_integrated$name_clean), "\n")
+cat("records with thermal data:", sum(!is.na(gbif_integrated$tmax) | !is.na(gbif_integrated$tmin)), "\n")
+cat("records with life-history data:", sum(!is.na(gbif_integrated$body_mass_g)), "\n")
+```
+
+```{r}
+# ============================================================================
+# create filtered datasets by trait completeness
+# ============================================================================
+
+library(dplyr)
+
+# ============================================================================
+# dataset 1: gbif + thermal data only
+# ============================================================================
+
+# records with thermal data (tmax or tmin)
+gbif_thermal_only <- gbif_integrated %>%
+  filter(!is.na(tmax) | !is.na(tmin))
+
+cat("=== dataset 1: gbif + thermal ===\n")
+cat("records:", nrow(gbif_thermal_only), "\n")
+cat("species:", n_distinct(gbif_thermal_only$name_clean), "\n")
+cat("with tmax:", sum(!is.na(gbif_thermal_only$tmax)), "\n")
+cat("with tmin:", sum(!is.na(gbif_thermal_only$tmin)), "\n\n")
+
+# ============================================================================
+# dataset 2: gbif + thermal + any life-history
+# ============================================================================
+
+# thermal data + at least one life-history trait
+gbif_thermal_plus_life <- gbif_integrated %>%
+  filter(!is.na(tmax) | !is.na(tmin)) %>%
+  filter(!is.na(body_mass_g) | !is.na(max_longevity_yrs) | 
+         !is.na(metabolic_rate_w) | !is.na(female_maturity_days))
+
+cat("=== dataset 2: gbif + thermal + any life-history ===\n")
+cat("records:", nrow(gbif_thermal_plus_life), "\n")
+cat("species:", n_distinct(gbif_thermal_plus_life$name_clean), "\n")
+cat("with body mass:", sum(!is.na(gbif_thermal_plus_life$body_mass_g)), "\n")
+cat("with longevity:", sum(!is.na(gbif_thermal_plus_life$max_longevity_yrs)), "\n")
+cat("with metabolic rate:", sum(!is.na(gbif_thermal_plus_life$metabolic_rate_w)), "\n\n")
+
+# ============================================================================
+# dataset 3: gbif + thermal + complete life-history
+# ============================================================================
+
+# thermal + body mass + longevity (core life-history traits)
+gbif_complete <- gbif_integrated %>%
+  filter(!is.na(tmax) | !is.na(tmin)) %>%
+  filter(!is.na(body_mass_g) & !is.na(max_longevity_yrs))
+
+cat("=== dataset 3: gbif + thermal + complete life-history ===\n")
+cat("records:", nrow(gbif_complete), "\n")
+cat("species:", n_distinct(gbif_complete$name_clean), "\n")
+cat("all have thermal:", sum(!is.na(gbif_complete$tmax) | !is.na(gbif_complete$tmin)), "\n")
+cat("all have body mass:", sum(!is.na(gbif_complete$body_mass_g)), "\n")
+cat("all have longevity:", sum(!is.na(gbif_complete$max_longevity_yrs)), "\n\n")
+
+# ============================================================================
+# data integrity checks
+# ============================================================================
+
+cat("=== data integrity checks ===\n\n")
+
+# check taxonomic distribution in each dataset
+cat("taxonomic coverage in each dataset:\n\n")
+
+cat("dataset 1 (thermal only) by class:\n")
+gbif_thermal_only %>%
+  count(class, sort = TRUE) %>%
+  head(10) %>%
+  print()
+
+cat("\ndataset 2 (thermal + any life-history) by class:\n")
+gbif_thermal_plus_life %>%
+  count(class, sort = TRUE) %>%
+  head(10) %>%
+  print()
+
+cat("\ndataset 3 (complete) by class:\n")
+gbif_complete %>%
+  count(class, sort = TRUE) %>%
+  head(10) %>%
+  print()
+
+# check coordinate completeness
+cat("\n=== coordinate availability ===\n")
+cat("dataset 1:", sum(!is.na(gbif_thermal_only$decimalLatitude) & 
+                       !is.na(gbif_thermal_only$decimalLongitude)), 
+    "records with coordinates\n")
+cat("dataset 2:", sum(!is.na(gbif_thermal_plus_life$decimalLatitude) & 
+                       !is.na(gbif_thermal_plus_life$decimalLongitude)), 
+    "records with coordinates\n")
+cat("dataset 3:", sum(!is.na(gbif_complete$decimalLatitude) & 
+                       !is.na(gbif_complete$decimalLongitude)), 
+    "records with coordinates\n")
+```
+```{r}
+# base dataset: gbif + globtherm match
+base_data <- gbif_integrated %>%
+  filter(!is.na(tmax) | !is.na(tmin))
+
+# add anage wherever it matches (no filtering)
+final_draft <- base_data %>%
+  # anage already joined in gbif_integrated
+  select(everything())
+
+# check what you have
+final_draft %>%
+  summarise(
+    records = n(),
+    species = n_distinct(name_clean),
+    has_thermal = sum(!is.na(tmax) | !is.na(tmin)),
+    has_body_mass = sum(!is.na(body_mass_g)),
+    has_longevity = sum(!is.na(max_longevity_yrs)),
+    has_metabolic = sum(!is.na(metabolic_rate_w)),
+    has_coords = sum(!is.na(decimalLatitude) & !is.na(decimalLongitude))
+  )
+```
+#ADD CURRENT DATA HERE
+
+```{r}
+# extract environmental data
+library(terra)
+library(dplyr)
+
+# prepare coordinates
+coords_clean <- final_draft %>%
+  filter(!is.na(decimalLatitude) & !is.na(decimalLongitude))
+
+coords_vect <- vect(coords_clean, 
+                    geom = c("decimalLongitude", "decimalLatitude"),
+                    crs = "EPSG:4326")
+
+# extract elevation
+cat("extracting elevation...\n")
+elev_vals <- extract(elev_rast, coords_vect, method = "bilinear")
+coords_clean$elevation_m <- elev_vals[, 2]
+
+# extract baseline climate (ALL 19 layers now)
+cat("extracting baseline climate...\n")
+baseline_files <- list.files("../../raw data/current_bioclim", 
+                              pattern = "\\.tif$", 
+                              full.names = TRUE)
+
+baseline_rast <- rast(baseline_files)
+baseline_vals <- extract(baseline_rast, coords_vect, method = "bilinear")
+baseline_df <- baseline_vals[, -1]
+names(baseline_df) <- paste0("bio", 1:19, "_current")  # ALL 19
+
+# extract future climate
+cat("extracting future climate...\n")
+future_vals <- extract(bioclim_rast, coords_vect, method = "bilinear")
+future_df <- future_vals[, -1]
+names(future_df) <- paste0("bio", 1:19)
+
+# combine
+coords_clean <- bind_cols(coords_clean, baseline_df, future_df)
+
+cat("\ncomplete - baseline: 19 | future: 19\n")
+
+final_with_env <- coords_clean
+```
+
+```{r}
+# list all column names with index
+cat("=== all column names ===\n\n")
+column_list <- data.frame(
+  index = 1:ncol(final_with_env),
+  column_name = names(final_with_env)
+)
+
+print(column_list, row.names = FALSE)
+```
+
+```{r}
+# remove unwanted columns
+remove_cols <- c(1,2,3,4,15,16,17,18,21,24,25,26,27,28,29,31,32,33,37,38,39,40,
+                 41,42,43,44,45,46,47,48,49,50)
+
+final_clean <- final_with_env[, -remove_cols]
+
+cat("remaining columns:\n")
+print(names(final_clean))
+```
+
+```{r}
+# add phylogenetic data from opentree of life
+library(rotl)
+library(ape)
+library(dplyr)
+
+if (!dir.exists("outputs")) dir.create("outputs")
+
+# get unique species
+species_list <- unique(final_with_env$name_clean)
+
+# match to opentree
+matched <- tnrs_match_names(species_list)
+
+# retrieve tree
+tree <- tol_induced_subtree(ott_ids = matched$ott_id[!is.na(matched$ott_id)])
+
+# calculate distances
+phylo_dist <- cophenetic(tree)
+
+# save outputs
+write.tree(tree, "outputs/ectotherm_phylogeny.nwk")
+write.csv(as.matrix(phylo_dist), "outputs/phylogenetic_distances.csv", row.names = TRUE)
+
+# create taxonomy table using unique_name (matches case)
+species_taxonomy <- matched %>%
+  select(unique_name, ott_id)
+
+# join to dataset
+final_with_phylo <- final_clean %>%
+  left_join(species_taxonomy, by = c("name_clean" = "unique_name"))
+
+# check results
+cat("records:", nrow(final_with_phylo), "\n")
+cat("with phylogeny:", sum(!is.na(final_with_phylo$ott_id)), "\n")
+cat("species in tree:", n_distinct(final_with_phylo$name_clean[!is.na(final_with_phylo$ott_id)]), "\n")
+```
+```{r}
+# reorder columns - priority variables first
+priority_cols <- c(
+  # species identity
+  "name_clean", "class", "phylum", "order", "family", "genus", "species",
+  
+  # coordinates
+  "decimalLatitude", "decimalLongitude",
+  
+  # thermal traits
+  "tmax", "tmin",
+  
+  # life-history traits
+  "body_mass_g", "adult_weight_g", "max_longevity_yrs", 
+  "metabolic_rate_w", "female_maturity_days", "male_maturity_days",
+  
+  # environmental predictors
+  "elevation_m", 
+  paste0("bio", 1:19, "_current"),  # baseline climate
+  paste0("bio", 1:19),               # future climate
+  
+  # phylogenetic
+  "ott_id",
+  
+  # taxonomy from trait databases
+  "phylum_gt", "class_gt", "order_gt"
+)
+
+# combine in order
+final_data_table <- final_with_phylo %>%
+  select(any_of(priority_cols), everything())
+
+cat("reordered columns\n")
+cat("total:", ncol(final_data_table), "\n")
+```
+
+```{r}
+# corrected temperature check
+cat("--- CORRECTED TEMPERATURE CHECK ---\n")
+
+# values are ALREADY in °C (not multiplied by 10)
+baseline_temp <- mean(final_data_table$bio1_current, na.rm = TRUE)
+future_temp <- mean(final_data_table$bio1, na.rm = TRUE)
+warming <- future_temp - baseline_temp
+
+cat("baseline mean temp:", round(baseline_temp, 1), "°C\n")
+cat("future mean temp:", round(future_temp, 1), "°C\n")
+cat("predicted warming:", round(warming, 1), "°C\n\n")
+
+if (baseline_temp >= 12 & baseline_temp <= 16) {
+  cat("✓ baseline temperature reasonable for Arizona\n")
+} else {
+  cat("⚠ baseline temperature outside expected range\n")
+}
+
+if (warming >= 2 & warming <= 5) {
+  cat("✓ warming signal reasonable for 2061-2080\n")
+} else {
+  cat("⚠ warming signal unusual\n")
+}
+```
+

@@ -1,0 +1,133 @@
+---
+title: "data import"
+output: html_document
+date: "2025-10-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# ============================================================================
+# build_master_dataset.r
+# ============================================================================
+
+project_dir <- "C:/Users/Gaming PC/OneDrive - University of Aberdeen/honours project"
+setwd(project_dir)
+
+library(readr)
+library(dplyr)
+library(stringr)
+library(terra)
+library(sf)
+library(rotl)
+library(ape)
+
+options(stringsAsFactors = FALSE)›
+if (!dir.exists("outputs")) dir.create("outputs")
+
+# ============================================================================
+# load data
+# ============================================================================
+
+gbif_raw <- read_delim("raw data/occurence_data.csv", 
+                       delim = "\t", 
+                       show_col_types = FALSE)
+
+bioclim_rast <- rast("raw data/bioclimatic_data.tif")
+elev_files <- list.files("raw data/elevation_data", pattern = "\\.tif$", full.names = TRUE)
+elev_rast <- rast(elev_files[1])
+
+# globtherm
+gt_files <- list.files("raw data/globtherm_thermal_data", 
+                       pattern = "\\.(csv|txt|tsv)$", full.names = TRUE)
+if (length(gt_files) > 0) {
+  globtherm_raw <- read_delim(gt_files[1], show_col_types = FALSE)
+} else {
+  globtherm_raw <- NULL
+}
+
+# dryad - try all csv files if subterranean pattern fails
+dryad_files <- list.files("raw data/dryad_thermal_data_evolution", 
+                          pattern = "\\.csv$", full.names = TRUE)
+if (length(dryad_files) > 0) {
+  cat("\navailable dryad files:\n")
+  print(basename(dryad_files))
+  dryad_raw <- read_csv(dryad_files[1], show_col_types = FALSE)
+  cat("loaded:", basename(dryad_files[1]), "\n")
+} else {
+  dryad_raw <- NULL
+}
+
+# anage
+anage_files <- list.files("raw data/anage_metabolic_data", 
+                          pattern = "\\.txt$", full.names = TRUE)
+if (length(anage_files) > 0) {
+  anage_raw <- read_delim(anage_files[1], delim = "\t", show_col_types = FALSE)
+} else {
+  anage_raw <- NULL
+}
+
+# ============================================================================
+# detailed column inspection for genus + species
+# ============================================================================
+
+cat("\n=== COLUMN STRUCTURE ===\n")
+
+# globtherm columns
+if (!is.null(globtherm_raw)) {
+  cat("\n--- GLOBTHERM ALL COLUMNS ---\n")
+  print(names(globtherm_raw))
+  
+  cat("\ncolumns containing 'genus':\n")
+  print(grep("genus", names(globtherm_raw), value = TRUE, ignore.case = TRUE))
+  
+  cat("\nsample rows:\n")
+  globtherm_raw %>% 
+    select(matches("genus|species", ignore.case = TRUE)) %>%
+    head(5) %>%
+    print()
+}
+
+# anage columns
+if (!is.null(anage_raw)) {
+  cat("\n--- ANAGE ALL COLUMNS ---\n")
+  print(names(anage_raw))
+  
+  cat("\ncolumns containing 'genus':\n")
+  print(grep("genus", names(anage_raw), value = TRUE, ignore.case = TRUE))
+  
+  cat("\nsample rows:\n")
+  anage_raw %>% 
+    select(matches("genus|species", ignore.case = TRUE)) %>%
+    head(5) %>%
+    print()
+}
+
+# dryad columns
+if (!is.null(dryad_raw)) {
+  cat("\n--- DRYAD ALL COLUMNS ---\n")
+  print(names(dryad_raw))
+  
+  cat("\ncolumns containing 'genus' or 'species':\n")
+  print(grep("genus|species", names(dryad_raw), value = TRUE, ignore.case = TRUE))
+  
+  cat("\nsample rows:\n")
+  dryad_raw %>% 
+    select(matches("genus|species|name", ignore.case = TRUE)) %>%
+    head(5) %>%
+    print()
+}
+
+# gbif - check what's in scientificName
+cat("\n--- GBIF scientificName FORMAT ---\n")
+cat("sample names:\n")
+print(head(gbif_raw$scientificName, 10))
+
+cat("\n=== INSPECTION COMPLETE ===\n")
+cat("\nNext step: identify genus columns and standardize names\n")
+```
+
+
+

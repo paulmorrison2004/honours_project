@@ -1,0 +1,349 @@
+---
+title: "guild making"
+output: html_document
+date: "2025-10-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## 1. Setup and Data Preparation
+```{r data-prep}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(cluster)
+
+# prepare species-level trait data
+species_data <- final_data_table %>%
+  group_by(name_clean, class) %>%
+  summarise(
+    tmax = mean(as.numeric(tmax), na.rm = TRUE),
+    body_mass = mean(coalesce(adult_weight_g, body_mass_g), na.rm = TRUE),
+    n_records = n(),
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(tmax), !is.na(body_mass))
+
+# load phylogeny and clean names
+phylo_raw <- read.csv("outputs/phylogenetic_distances.csv", row.names = 1)
+phylo_names <- rownames(phylo_raw) %>%
+  str_replace("_ott.*", "") %>%
+  str_replace("_", " ")
+rownames(phylo_raw) <- phylo_names
+colnames(phylo_raw) <- phylo_names
+
+# match species with phylogeny
+matching <- intersect(species_data$name_clean, rownames(phylo_raw))
+guild_data <- species_data %>% filter(name_clean %in% matching)
+
+cat("species with traits:", nrow(species_data), "\n")
+cat("species with phylogeny:", nrow(guild_data), "\n")
+```
+
+## 2. Trait Analysis
+```{r trait-analysis}
+# trait summary
+trait_matrix <- guild_data %>%
+  select(tmax, body_mass) %>%
+  as.matrix()
+
+cat("=== trait summary ===\n")
+summary(trait_matrix)
+
+cat("\n=== correlation ===\n")
+cor(trait_matrix)
+
+# taxonomic distribution
+guild_data %>%
+  count(class) %>%
+  arrange(desc(n))
+```
+
+## 3. PCA and Distance Matrices
+```{r pca-distances}
+# pca on scaled traits
+pca <- prcomp(scale(trait_matrix))
+
+cat("=== variance explained ===\n")
+print(summary(pca)$importance)
+
+cat("\n=== pca loadings ===\n")
+print(pca$rotation)
+
+# create distance matrices
+phylo_dist <- as.dist(phylo_raw[matching, matching])
+trait_dist <- dist(pca$x[, 1:2])
+
+# initial combined distance (50/50 for testing)
+combined_dist <- 0.5 * phylo_dist + 0.5 * trait_dist
+hc <- hclust(combined_dist, method = "ward.D2")
+
+cat("\ndistances calculated\n")
+```
+
+## 4. Optimal k Selection
+```{r elbow-plot, fig.width=8, fig.height=5}
+k_values <- 5:15
+elbow_results <- data.frame()
+
+for(k in k_values) {
+  guilds <- cutree(hc, k = k)
+  sil <- mean(silhouette(guilds, combined_dist)[, 3])
+  singles <- sum(table(guilds) == 1)
+  
+  elbow_results <- rbind(elbow_results, 
+                         data.frame(k = k, silhouette = sil, singles = singles))
+}
+
+ggplot(elbow_results, aes(x = k, y = silhouette)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(aes(color = singles > 0), size = 3) +
+  scale_color_manual(values = c("darkgreen", "red"), 
+                     labels = c("no singles", "has singles")) +
+  labs(title = "Optimal Guild Number",
+       x = "Number of Guilds (k)",
+       y = "Silhouette Score") +
+  theme_minimal()
+
+print(elbow_results)
+
+# optimal k
+best_k <- elbow_results %>%
+  filter(singles == 0) %>%
+  filter(silhouette == max(silhouette)) %>%
+  pull(k)
+
+cat("\nrecommended k:", best_k[1], "\n")
+```
+
+## 5. Test Phylogeny Weights
+```{r test-weights}
+chosen_k <- 9
+
+weights <- c(0.30, 0.50, 0.70, 0.80)
+cat("=== testing phylogeny weights (k=9) ===\n\n")
+
+for(w in weights) {
+  combined <- w * phylo_dist + (1-w) * trait_dist
+  guilds <- cutree(hclust(combined, method = "ward.D2"), k = chosen_k)
+  
+  mixed <- guild_data %>%
+    mutate(guild = guilds) %>%
+    group_by(guild) %>%
+    summarise(n_classes = n_distinct(class)) %>%
+    filter(n_classes > 1) %>%
+    nrow()
+  
+  sil <- mean(silhouette(guilds, combined)[, 3])
+  
+  cat("weight:", w, "| silhouette:", round(sil, 3), 
+      "| mixed guilds:", mixed, "\n")
+}
+```
+
+## 6. Create Final Guilds
+```{r final-guilds}
+# use 50/50 weighting (robust across weightings)
+combined_final <- 0.50 * phylo_dist + 0.50 * trait_dist
+hc_final <- hclust(combined_final, method = "ward.D2")
+guild_data$guild <- cutree(hc_final, k = 9)
+
+# guild summary
+cat("=== guild composition ===\n")
+guild_summary <- guild_data %>%
+  group_by(guild) %>%
+  summarise(
+    n = n(),
+    classes = paste(unique(class), collapse = "/"),
+    tmax_range = paste(round(min(tmax)), "-", round(max(tmax))),
+    mass_range = paste(round(min(body_mass)), "-", round(max(body_mass))),
+    .groups = "drop"
+  )
+
+print(guild_summary)
+```
+```{r}
+# split heterogeneous guilds by body size
+guild_data <- guild_data %>%
+  mutate(guild = case_when(
+    # split guild 4: squamata
+    guild == 4 & body_mass < 500 ~ 10,   # small lizards
+    guild == 4 & body_mass >= 500 ~ 4,   # large snakes
+    # split guild 1: aves
+    guild == 1 & body_mass < 150 ~ 11,   # small birds
+    TRUE ~ guild                          # keep all others
+  ))
+
+cat("guild sizes:\n")
+table(guild_data$guild)
+
+cat("\nsplit summaries:\n")
+guild_data %>%
+  filter(guild %in% c(1, 4, 10, 11)) %>%
+  group_by(guild) %>%
+  summarise(
+    n = n(),
+    class = unique(class),
+    mass_range = paste(round(min(body_mass)), "-", round(max(body_mass))),
+    tmax_range = paste(round(min(tmax)), "-", round(max(tmax)))
+  )
+```
+
+
+## 7. PCA Visualization
+```{r pca-plot, fig.width=10, fig.height=6}
+pca_plot <- data.frame(
+  pc1 = pca$x[, 1],
+  pc2 = pca$x[, 2],
+  guild = factor(guild_data$guild),
+  class = guild_data$class,
+  species = guild_data$name_clean
+)
+
+var_exp <- summary(pca)$importance[2, ] * 100
+
+ggplot(pca_plot, aes(pc1, pc2, color = guild, shape = class)) +
+  geom_point(size = 3, alpha = 0.7) +
+  stat_ellipse(aes(group = guild), linetype = 2) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Guild Clusters in PCA Space",
+       x = paste0("PC1 (", round(var_exp[1], 1), "%)"),
+       y = paste0("PC2 (", round(var_exp[2], 1), "%)")) +
+  theme_minimal()
+```
+
+## 8. Detailed Guild Descriptions
+```{r guild-details}
+for(i in 1:11) {
+  cat("\n========== GUILD", i, "==========\n")
+  
+  guild_i <- guild_data %>% filter(guild == i)
+  
+  cat("species:", nrow(guild_i), "\n")
+  cat("taxa:", paste(unique(guild_i$class), collapse = ", "), "\n")
+  cat("tmax:", round(min(guild_i$tmax)), "-", round(max(guild_i$tmax)), "°C\n")
+  cat("mass:", round(min(guild_i$body_mass)), "-", 
+      round(max(guild_i$body_mass)), "g\n\n")
+  
+  guild_i %>%
+    arrange(class, tmax) %>%
+    select(name_clean, class, tmax, body_mass) %>%
+    print(n = 50)
+}
+```
+
+```{r}
+# create guild naming lookup table
+guild_names <- data.frame(
+  guild = 1:11,
+  guild_name = c(
+    "large owls",                      # guild 1
+    "small passerines",                # guild 2
+    "medium burrowing mammals",        # guild 3
+    "large snakes",                    # guild 4
+    "medium ground birds",             # guild 5
+    "large carnivorous mammals",       # guild 6
+    "small cavity-nesting birds",      # guild 7
+    "insectivorous bats",              # guild 8
+    "small nocturnal rodents",         # guild 9
+    "small reptiles",                  # guild 10
+    "small woodland birds"             # guild 11
+  )
+)
+
+# add guild names to data
+guild_data <- guild_data %>%
+  left_join(guild_names, by = "guild")
+
+# verify assignment
+cat("=== FINAL GUILD NAMES ===\n\n")
+guild_data %>%
+  group_by(guild, guild_name) %>%
+  summarise(
+    n = n(),
+    class = paste(unique(class), collapse = "/"),
+    mass = paste0(round(min(body_mass)), "-", round(max(body_mass)), "g"),
+    ctmax = paste0(round(min(tmax)), "-", round(max(tmax)), "°C"),
+    .groups = "drop"
+  ) %>%
+  print(n = Inf)
+
+# save updated data
+write.csv(guild_data, "outputs/guild_assignments_named.csv", row.names = FALSE)
+```
+
+
+
+ Save Outputs
+```{r save-outputs}
+final_with_guilds <- final_data_table %>%
+  left_join(guild_data %>% select(name_clean, guild, guild_name), by = "name_clean")
+
+# save files
+write.csv(guild_data, "outputs/guild_assignments.csv", row.names = FALSE)
+write.csv(final_with_guilds, "outputs/master_data_with_guilds.csv", row.names = FALSE)
+
+cat("saved:\n")
+cat("  guild_assignments.csv (species-level)\n")
+cat("  master_data_with_guilds.csv (all occurrences)\n\n")
+
+cat("final check:\n")
+cat("total occurrences:", nrow(final_with_guilds), "\n")
+cat("with guilds:", sum(!is.na(final_with_guilds$guild)), "\n")
+cat("unique species:", n_distinct(guild_data$name_clean), "\n")
+cat("\nguild formation complete\n")
+```
+
+# Quick data check
+```{r}
+# diagnose guild join
+cat("=== GUILD JOIN DIAGNOSIS ===\n\n")
+
+# structure check
+cat("--- STRUCTURE ---\n")
+cat("records before join:", nrow(final_data_table), "\n")
+cat("records after join:", nrow(final_with_guilds), "\n")
+cat("columns added:", ncol(final_with_guilds) - ncol(final_data_table), "\n\n")
+
+# guild assignment success
+cat("--- GUILD ASSIGNMENT ---\n")
+cat("records with guilds:", sum(!is.na(final_with_guilds$guild)), "\n")
+cat("records without guilds:", sum(is.na(final_with_guilds$guild)), "\n")
+cat("percentage guilded:", round(100 * sum(!is.na(final_with_guilds$guild)) / nrow(final_with_guilds), 1), "%\n\n")
+
+# species coverage
+cat("--- SPECIES COVERAGE ---\n")
+cat("total species:", n_distinct(final_with_guilds$name_clean), "\n")
+cat("species with guilds:", n_distinct(final_with_guilds$name_clean[!is.na(final_with_guilds$guild)]), "\n")
+cat("species without guilds:", 
+    n_distinct(final_with_guilds$name_clean[is.na(final_with_guilds$guild)]), "\n\n")
+
+# guild distribution
+cat("--- GUILD DISTRIBUTION ---\n")
+final_with_guilds %>%
+  filter(!is.na(guild)) %>%
+  count(guild, guild_name) %>%
+  arrange(guild) %>%
+  mutate(percentage = round(100 * n / sum(n), 1)) %>%
+  print(n = Inf)
+
+# check for duplicate rows
+cat("\n--- DATA INTEGRITY ---\n")
+cat("duplicate rows:", anyDuplicated(final_with_guilds), "\n")
+
+# column position check
+guild_pos <- which(names(final_with_guilds) == "guild")
+guild_name_pos <- which(names(final_with_guilds) == "guild_name")
+cat("guild column position:", guild_pos, "\n")
+cat("guild_name column position:", guild_name_pos, "\n")
+
+cat("\n=== JOIN COMPLETE ===\n")
+if (sum(!is.na(final_with_guilds$guild)) == nrow(final_with_guilds)) {
+  cat("✓ all records successfully guilded\n")
+} else {
+  cat("⚠ some records missing guild assignments\n")
+}
+```
+
