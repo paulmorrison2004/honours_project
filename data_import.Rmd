@@ -9,9 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-# ============================================================================
 # build_master_dataset.r
-# ============================================================================
 
 project_dir <- "C:/Users/Gaming PC/OneDrive - University of Aberdeen/honours project"
 setwd(project_dir)
@@ -27,9 +25,7 @@ library(ape)
 options(stringsAsFactors = FALSE)›
 if (!dir.exists("outputs")) dir.create("outputs")
 
-# ============================================================================
 # load data
-# ============================================================================
 
 gbif_raw <- read_delim("raw data/occurence_data.csv", 
                        delim = "\t", 
@@ -69,9 +65,7 @@ if (length(anage_files) > 0) {
   anage_raw <- NULL
 }
 
-# ============================================================================
 # detailed column inspection for genus + species
-# ============================================================================
 
 cat("\n=== COLUMN STRUCTURE ===\n")
 
