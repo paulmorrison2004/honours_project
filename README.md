@@ -10,4 +10,4 @@ The project combined occurrence, climatic, elevation, and physiological trait da
 
 The work was developed as a scalable and reproducible pipeline for trait-based ecological forecasting, with the broader aim of improving how climate vulnerability is identified across functionally distinct groups.
 
-This repository is included primarily to demonstrate the analytical workflow behind the thesis and my experience applying machine learning to ecological and conservation questions.
+This repository is included primarily to demonstrate the analytical workflow behind the thesis and my experience applying machine learning to ecological and biological questions.
